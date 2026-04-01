@@ -5,30 +5,35 @@
 #include "common.h"
 #include "protocol.h"
 
+/* Validate whether the requested mode is supported by the module */
 static int is_valid_mode(const char *mode) {
   return (strcmp(mode, "IDLE") == 0 || strcmp(mode, "ACTIVE") == 0 ||
           strcmp(mode, "SERVICE") == 0 || strcmp(mode, "SAFE") == 0);
 }
 
-void handle_read_status(char *response, size_t response_size,
-                        module_state_t *state) {
+/* Build response payload for READ_STATUS using current module state */
+static void handle_read_status(char *response, size_t response_size,
+                               module_state_t *state) {
   snprintf(response, response_size,
            "OK:READ_STATUS:module_id=%d,mode=%s,heartbeat=%d,uptime=%d,fault_"
-           "active=%d\n",
+           "active=%d,reset_state=%d\n",
            MODULE_ID, state->current_mode, state->heartbeat, state->uptime,
-           state->fault_active);
+           state->fault_active, state->reset_state);
 }
 
-void handle_read_fault(char *response, size_t response_size,
-                       module_state_t *state) {
+/* Build response payload for READ_FAULT using current fault information */
+static void handle_read_fault(char *response, size_t response_size,
+                              module_state_t *state) {
   snprintf(response, response_size,
-           "OK:READ_FAULT:module_id=%d,fault_active=%d,fault_code=%d\n",
-           MODULE_ID, state->fault_active, state->fault_code);
+           "OK:READ_FAULT:module_id=%d,fault_active=%d,fault_code=%d,reset_"
+           "state=%d\n",
+           MODULE_ID, state->fault_active, state->fault_code,
+           state->reset_state);
 }
 
-void handle_set_mode(const char *request, char *response, size_t response_size,
-                     module_state_t *state) {
-
+/* Parse SET_MODE request, validate requested mode, and update module mode */
+static void handle_set_mode(const char *request, char *response,
+                            size_t response_size, module_state_t *state) {
   const char *mode_value = request + 9;
 
   if (is_valid_mode(mode_value)) {
@@ -42,11 +47,10 @@ void handle_set_mode(const char *request, char *response, size_t response_size,
   }
 }
 
-void handle_inject_fault(const char *request, char *response,
-                         size_t response_size, module_state_t *state) {
-
-  const char *code_str = request + 13; // "INJECT_FAULT:" = 13 chars
-
+/* Parse INJECT_FAULT request and activate a simulated fault for testing */
+static void handle_inject_fault(const char *request, char *response,
+                                size_t response_size, module_state_t *state) {
+  const char *code_str = request + 13;
   int code = atoi(code_str);
 
   if (code <= 0) {
@@ -61,8 +65,9 @@ void handle_inject_fault(const char *request, char *response,
            "OK:INJECT_FAULT:fault_active=1,fault_code=%d\n", code);
 }
 
-void handle_clear_fault(char *response, size_t response_size,module_state_t *state) {
-
+/* Clear the active simulated fault and reset fault code to zero */
+static void handle_clear_fault(char *response, size_t response_size,
+                               module_state_t *state) {
   state->fault_active = 0;
   state->fault_code = 0;
 
@@ -70,49 +75,45 @@ void handle_clear_fault(char *response, size_t response_size,module_state_t *sta
            "OK:CLEAR_FAULT:fault_active=0,fault_code=0\n");
 }
 
-void handle_reset(char *response,size_t response_size, module_state_t *state) {
-
+/* Reset module state and raise a reset flag so main can restart timing base */
+static void handle_reset(char *response, size_t response_size,
+                         module_state_t *state) {
   strcpy(state->current_mode, "IDLE");
   state->fault_active = 0;
   state->fault_code = 0;
-  state->heartbeat=0;
-  state->uptime=0;
+  state->heartbeat = 0;
+  state->uptime = 0;
+  state->reset_state = 1;
 
   snprintf(response, response_size,
-           "OK:RESET_MODULE:module_id=%d,mode=%s,heartbeat=%d,uptime=%d,fault_active=%d\n",
+           "OK:RESET_MODULE:module_id=%d,mode=%s,heartbeat=%d,uptime=%d,fault_"
+           "active=%d,reset_state=%d\n",
            MODULE_ID, state->current_mode, state->heartbeat, state->uptime,
-           state->fault_active);
+           state->fault_active, state->reset_state);
 }
 
+/* Dispatch one request string to the matching protocol handler */
 void build_response(const char *request, char *response, size_t response_size,
                     module_state_t *state) {
-
   if (strcmp(request, "READ_STATUS") == 0) {
-
     handle_read_status(response, response_size, state);
 
   } else if (strcmp(request, "READ_FAULT") == 0) {
-
     handle_read_fault(response, response_size, state);
 
-  }
-
-  else if (strncmp(request, "SET_MODE:", 9) == 0) {
+  } else if (strncmp(request, "SET_MODE:", 9) == 0) {
     handle_set_mode(request, response, response_size, state);
 
   } else if (strncmp(request, "INJECT_FAULT:", 13) == 0) {
     handle_inject_fault(request, response, response_size, state);
-  }
 
-else if (strncmp(request, "CLEAR_FAULT", 12) == 0) {
-  handle_clear_fault(response, response_size, state);
-  }
+  } else if (strcmp(request, "CLEAR_FAULT") == 0) {
+    handle_clear_fault(response, response_size, state);
 
-  else if (strcmp(request, "RESET_MODULE") == 0) {
+  } else if (strcmp(request, "RESET_MODULE") == 0) {
     handle_reset(response, response_size, state);
-  }
 
-  else {
+  } else {
     snprintf(response, response_size, "ERR:UNKNOWN_COMMAND\n");
   }
 }
