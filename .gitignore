@@ -1,3 +1,4 @@
 /docs/images
 *.o
 learnings.md
+./a.out
